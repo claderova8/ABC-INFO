@@ -56,12 +56,12 @@
 
 工具支持多种输入方式：
 
-- `-u`, `--url`：&#8203;:contentReference[oaicite:36]{index=36}
-- `-eu`, `--extract-url`：&#8203;:contentReference[oaicite:37]{index=37}
-- `-l`, `--list`：&#8203;:contentReference[oaicite:38]{index=38}
-- `-el`, `--extract-list`：&#8203;:contentReference[oaicite:39]{index=39}
-- `-f`, `--file`：&#8203;:contentReference[oaicite:40]{index=40}
-- `-o`, `--output`：&#8203;:contentReference[oaicite:41]{index=41}&#8203;:contentReference[oaicite:42]{index=42}
+- `-u`, `--url`：要分析的网页URL
+- `-eu`, `--extract-url`：直接分析的JavaScript URL
+- `-l`, `--list`：包含网页URL列表的文件
+- `-el`, `--extract-list`：包含JavaScript URL列表的文件
+- `-f`, `--file`：直接分析本地JavaScript文件
+- `-o`, `--output`：指定输出文件名（默认为ok.txt）
 
 ### 5.示例
 
