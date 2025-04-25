@@ -39,6 +39,9 @@ def clean_and_validate_json(params_str):
         js_expressions.append(expr)
         return f': "__JS_EXPR_{len(js_expressions)-1}__"'
     
+    # 保存原始字符串以备还原
+    original_params_str = params_str
+    
     # 替换JavaScript表达式，但保留原始值用于后续恢复
     params_str = re.sub(r':\s*(localStorage\.\w+(?:\|\|[^,}]*)?|[a-zA-Z_$][a-zA-Z0-9_$]*\.[a-zA-Z_$][a-zA-Z0-9_$]*(?:\|\|[^,}]*)?)', replace_js_expr, params_str)
     
@@ -58,6 +61,13 @@ def clean_and_validate_json(params_str):
     
     # 处理末尾多余的逗号
     params_str = re.sub(r',\s*}', '}', params_str)
+    
+    # 尝试解析JSON以验证格式是否正确
+    try:
+        json.loads(params_str)
+    except json.JSONDecodeError:
+        # 如果处理后的JSON格式不正确，还原为原始字符串
+        params_str = original_params_str
     
     # 恢复原始的JavaScript表达式
     for i, expr in enumerate(js_expressions):
@@ -118,6 +128,8 @@ def format_params(params):
                     elif char == '}' or char == ']':
                         result.append('\n')
                         level -= 1
+                        if level < 0:  # 防止缩进级别为负数
+                            level = 0
                         result.append('    ' * level)
                         result.append(char)
                     elif char == ',':
@@ -135,7 +147,7 @@ def format_params(params):
                 i += 1
                 
             return ''.join(result)
-        except:
+        except Exception as e:
             # 如果所有尝试都失败，返回基本美化的字符串
             cleaned_params = params.replace("'", '"')
             # 基本美化尝试
