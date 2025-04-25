@@ -1,58 +1,55 @@
 # -*- coding: utf-8 -*-
 """
-输出工具模块 (适配异步写入)
-功能：处理结果输出到文件
+输出工具模块（异步版本）
+功能：将提取结果异步写入文件，确保并发安全
 """
 import asyncio
-import aiofiles # 需要安装 aiofiles: pip install aiofiles
 import logging
-import os
+import aiofiles  # 使用 aiofiles 进行异步文件操作
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_FILE = 'output_results.md' # 更改默认扩展名为 .md
-_file_lock = asyncio.Lock() # 异步锁，确保写入操作的原子性
+# 默认输出文件名，可由主脚本覆盖
+OUTPUT_FILE = "api_extraction_results.md"
 
-def setup_output_file(header_content):
-    """清空或创建输出文件，并写入头部内容 (同步操作)"""
-    global OUTPUT_FILE
-    try:
-        # 确保目录存在
-        output_dir = os.path.dirname(OUTPUT_FILE)
-        if output_dir and not os.path.exists(output_dir):
-             os.makedirs(output_dir)
-             logger.info(f"Created output directory: {output_dir}")
+# 锁对象，防止多任务并发写入时发生竞态
+output_lock = asyncio.Lock()
 
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            f.write(header_content)
-        logger.info(f"Output file '{OUTPUT_FILE}' initialized.")
-    except IOError as e:
-        logger.error(f"Failed to initialize output file '{OUTPUT_FILE}': {e}")
-        # 可以考虑退出程序或使用备用文件名
-        raise # 重新抛出异常，让调用者知道初始化失败
+async def setup_output_file(header: str, filename: str = None):
+    """
+    异步创建或清空输出文件，并写入头部信息。
 
-async def append_to_file(content):
-    """异步追加内容到输出文件 (线程/协程安全)"""
-    global OUTPUT_FILE
-    async with _file_lock: # 获取锁
+    参数:
+        header (str): 要写入的头部内容
+        filename (str, 可选): 输出文件名，默认为 OUTPUT_FILE
+    抛出:
+        IOError: 无法写入文件时抛出
+    """
+    file_to_write = filename or OUTPUT_FILE
+    async with output_lock:
         try:
-            async with aiofiles.open(OUTPUT_FILE, mode='a', encoding='utf-8') as f:
+            async with aiofiles.open(file_to_write, mode='w', encoding='utf-8') as f:
+                await f.write(header)
+            logger.debug(f"已初始化输出文件：'{file_to_write}'，并写入头部信息。")
+        except IOError as e:
+            logger.error(f"初始化输出文件时出错：'{file_to_write}' - {e}")
+            raise
+
+async def append_to_file(content: str, filename: str = None):
+    """
+    异步将内容追加到输出文件。
+
+    参数:
+        content (str): 要追加的文本内容
+        filename (str, 可选): 输出文件名，默认为 OUTPUT_FILE
+    """
+    file_to_write = filename or OUTPUT_FILE
+    async with output_lock:
+        try:
+            async with aiofiles.open(file_to_write, mode='a', encoding='utf-8') as f:
                 await f.write(content)
-        except Exception as e:
-            logger.error(f"Failed to append content to '{OUTPUT_FILE}': {e}")
-
-# 保留旧的同步写入函数，以防万一或用于非异步部分
-def write_to_file(content, mode='a'):
-    """同步写入内容到输出文件 (非协程安全)"""
-    global OUTPUT_FILE
-    try:
-        # 确保目录存在 (以防万一 setup 未运行)
-        output_dir = os.path.dirname(OUTPUT_FILE)
-        if output_dir and not os.path.exists(output_dir):
-             os.makedirs(output_dir)
-
-        with open(OUTPUT_FILE, mode, encoding='utf-8') as f:
-            f.write(content)
-    except Exception as e:
-        logger.error(f"Failed to write content synchronously to '{OUTPUT_FILE}': {e}")
-
+            # 可选调试日志，可能会过于冗余
+            # logger.debug(f"已将内容追加到文件：'{file_to_write}'。")
+        except IOError as e:
+            logger.error(f"追加写入输出文件时出错：'{file_to_write}' - {e}")
+            # 如需在写入失败时抛出异常，可在此处使用 raise
