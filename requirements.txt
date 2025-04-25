@@ -1,0 +1,9 @@
+# 核心依赖
+requests  # 仍然需要，以防需要同步回退或其他任务
+aiohttp  # 用于异步 HTTP 请求
+beautifulsoup4  # 用于解析 HTML
+# 如有需要，可以添加其他依赖，例如特定的 AST 库（如果不使用 Node.js）
+
+# 注意：该项目还需要 Node.js 和 'esprima' npm 包。
+# 从 https://nodejs.org/ 安装 Node.js
+# 然后在项目目录中运行：npm install esprima
