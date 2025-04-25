@@ -4,29 +4,23 @@
 
 ## 项目结构
 
-:contentReference[oaicite:2]{index=2}&#8203;:contentReference[oaicite:3]{index=3}
+该工具采用模块化设计，主要组件包括：
 
-### 1. 主模块 (`main.py`)
+1. **主模块 (`main.py`)**  
+   负责处理命令行参数，根据不同参数调用相应的处理功能。
 
-- :contentReference[oaicite:4]{index=4}
-- :contentReference[oaicite:5]{index=5}&#8203;:contentReference[oaicite:6]{index=6}
+2. **处理器模块 (`processors/`)**  
+   - `file_processor.py`：处理本地 JavaScript 文件。  
+   - `url_processor.py`：处理网页和远程 JavaScript 文件。
 
-### 2. 处理器模块 (`processors/`)
+3. **提取器模块 (`extractors/`)**  
+   - `js_extractor.py`：负责从 JavaScript 代码中提取 HTTP 请求。
 
-- `file_processor.py`：&#8203;:contentReference[oaicite:7]{index=7}
-- `url_processor.py`：&#8203;:contentReference[oaicite:8]{index=8}&#8203;:contentReference[oaicite:9]{index=9}
+4. **格式化器模块 (`formatters/`)**  
+   - `param_formatter.py`：处理和格式化 API 参数。
 
-### 3. 提取器模块 (`extractors/`)
-
-- `js_extractor.py`：&#8203;:contentReference[oaicite:10]{index=10}&#8203;:contentReference[oaicite:11]{index=11}
-
-### 4. 格式化器模块 (`formatters/`)
-
-- `param_formatter.py`：&#8203;:contentReference[oaicite:12]{index=12}&#8203;:contentReference[oaicite:13]{index=13}
-
-### 5. 工具模块 (`utils/`)
-
-- `output_utils.py`：&#8203;:contentReference[oaicite:14]{index=14}&#8203;:contentReference[oaicite:15]{index=15}
+5. **工具模块 (`utils/`)**  
+   - `output_utils.py`：处理结果输出到文件。
 
 ## 核心功能
 
