@@ -89,7 +89,7 @@ def extract_requests(js_content):
         r'variables\s*:\s*(\{[^}{]*(?:\{[^}{]*\}[^}{]*)*\})',
     ]
     
-    # 使用更简化的大括号查找策略，原来的过于复杂可能导致性能问题
+    # 使用更精确的大括号匹配策略
     curl_bracket_pattern = r'\{\s*["\']?\w+["\']?\s*:\s*[^{}]+(?:\s*,\s*["\']?\w+["\']?\s*:\s*[^{}]+)*\s*\}'
     
     # 处理URL方法匹配
@@ -105,7 +105,7 @@ def extract_requests(js_content):
                     continue
                     
                 context = extract_context(js_content, match.start(), match.end())
-                params = extract_params(context, param_patterns, curl_bracket_pattern)
+                params = extract_params(context, param_patterns, curl_bracket_pattern, match.start())
                 api_type = classify_api_endpoint(url, method, context)
                 
                 add_unique_result(results, {
@@ -155,8 +155,15 @@ def extract_context(js_content, start_pos, end_pos, before_chars=200, after_char
     end = min(len(js_content), end_pos + after_chars)
     return js_content[start:end]
 
-def extract_params(context, param_patterns, curl_bracket_pattern):
+def extract_params(context, param_patterns, curl_bracket_pattern, match_pos=None):
     """从上下文中提取参数"""
+    # 使用匹配位置来更准确地定位上下文
+    if match_pos is None:
+        match_pos = len(context) // 2  # 假设匹配位置在上下文中间
+    else:
+        # 将外部传入的匹配位置相对于上下文调整
+        match_pos = match_pos - max(0, match_pos - 200)
+    
     # 首先尝试使用精准的参数模式查找
     for param_pattern in param_patterns:
         try:
@@ -169,11 +176,10 @@ def extract_params(context, param_patterns, curl_bracket_pattern):
     
     # 尝试通用的大括号查找 - 在附近查找JSON对象
     try:
-        match_pos = len(context) // 3  # 假设上下文中间位置附近是请求调用
         curl_matches = list(re.finditer(curl_bracket_pattern, context, re.DOTALL))
         
         if curl_matches:
-            # 找到离中间位置最近的大括号对象
+            # 找到离匹配位置最近的大括号对象
             closest_match = min(curl_matches, key=lambda m: abs(match_pos - (m.start() + m.end()) // 2))
             
             # 只考虑相对接近调用的对象（150字符内）
@@ -223,17 +229,19 @@ def extract_websocket_connections(js_content, websocket_patterns, results):
         try:
             matches = re.finditer(pattern, js_content)
             for match in matches:
-                url = match.group('url')
-                # 跳过明显无效的WebSocket URL
-                if not url or len(url) < 2:
-                    continue
-                    
-                add_unique_result(results, {
-                    'method': 'CONNECT',
-                    'url': url,
-                    'params': None,
-                    'api_type': 'WebSocket'
-                })
+                # 检查groupdict中是否有'url'
+                if 'url' in match.groupdict():
+                    url = match.group('url')
+                    # 跳过明显无效的WebSocket URL
+                    if not url or len(url) < 2:
+                        continue
+                        
+                    add_unique_result(results, {
+                        'method': 'CONNECT',
+                        'url': url,
+                        'params': None,
+                        'api_type': 'WebSocket'
+                    })
         except Exception:
             continue
 
@@ -257,7 +265,7 @@ def extract_additional_urls(js_content, param_patterns, curl_bracket_pattern, re
             method = guess_http_method(context)
             
             # 查找参数
-            params = extract_params(context, param_patterns, curl_bracket_pattern)
+            params = extract_params(context, param_patterns, curl_bracket_pattern, url_match.start())
             
             # 确定API类型
             api_type = classify_api_endpoint(url, method, context)
