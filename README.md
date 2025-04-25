@@ -80,7 +80,7 @@ python main.py -l urls.txt
 # 指定输出文件
 python main.py -u https://example.com -o results.txt
 
-```bash
+```
 
 ## 技术亮点
 
