@@ -15,7 +15,7 @@ def format_params(params_data):
     会保留这些标记。
 
     参数:
-        params_data: 从 extract_object_literal 返回的字典或 None
+        params_data: 从 extract_object_literal 返回的字典, 字符串标记, 或 None
 
     返回:
         格式化后的字符串，或者 "无参数"
@@ -23,34 +23,44 @@ def format_params(params_data):
     if params_data is None:
         return "无参数"
 
-    if not isinstance(params_data, dict):
-        # 如果输入不是预期的字典 (可能是旧 regex 提取的字符串)，尝试基本处理
-        if isinstance(params_data, str):
-             # 尝试直接解析为 JSON
-             try:
-                 parsed = json.loads(params_data)
-                 return json.dumps(parsed, indent=4, ensure_ascii=False, sort_keys=True)
-             except json.JSONDecodeError:
-                 # 如果是旧格式的清理后字符串，直接返回
-                 return params_data.strip()
-        return "参数格式未知" # 其他意外类型
+    # 处理 AST 提取器直接返回的字符串标记 (如 "[Variable: data]")
+    if isinstance(params_data, str) and params_data.startswith('['):
+         return params_data # 直接返回标记字符串
 
-    if not params_data: # 空字典
-        return "无参数 (空对象)"
+    # 处理 AST 提取器返回的字典
+    if isinstance(params_data, dict):
+        if not params_data: # 空字典
+            return "无参数 (空对象)"
+        try:
+            # 直接将字典格式化为 JSON
+            return json.dumps(params_data, indent=4, ensure_ascii=False, sort_keys=True)
+        except TypeError as e:
+            # --- BUG 修复: 更具体的异常处理 ---
+            logger.error(f"格式化参数字典为 JSON 时发生 TypeError: {e}. 参数: {params_data}", exc_info=True)
+            # 如果序列化失败，返回原始字典的字符串表示形式
+            return str(params_data)
 
-    try:
-        # 直接将字典格式化为 JSON
-        # ensure_ascii=False 保留非 ASCII 字符
-        # sort_keys=True 使输出顺序稳定
-        # indent=4 提供缩进
-        return json.dumps(params_data, indent=4, ensure_ascii=False, sort_keys=True)
-    except TypeError as e:
-        logger.error(f"Error formatting parameters to JSON: {e}. Params: {params_data}")
-        # 如果序列化失败（理论上不应发生，因为我们处理的是基本类型和字符串标记），返回原始表示
-        return str(params_data)
-    except Exception as e:
-         logger.error(f"Unexpected error during parameter formatting: {e}")
-         return "[参数格式化错误]"
+    # --- 处理可能的旧格式或意外输入 ---
+    # 如果输入是字符串但不是标记格式，尝试解析为 JSON (可能是旧 regex 提取的?)
+    if isinstance(params_data, str):
+        logger.debug(f"参数数据是字符串，尝试解析为 JSON: {params_data[:100]}...") # Log a preview
+        try:
+            # 尝试去除可能的 JavaScript 对象字面量引号问题 (谨慎使用)
+            # cleaned_str = params_data.replace("'", '"') # 这可能破坏字符串内部的单引号
+            parsed = json.loads(params_data) # 直接尝试解析
+            return json.dumps(parsed, indent=4, ensure_ascii=False, sort_keys=True)
+        except json.JSONDecodeError:
+             logger.warning(f"参数字符串不是有效的 JSON，按原样返回: {params_data[:100]}...")
+             # 如果是旧格式的清理后字符串，直接返回
+             return params_data.strip()
+        except Exception as e:
+             # --- BUG 修复: 捕获其他解析错误 ---
+             logger.error(f"解析参数字符串时发生意外错误: {e}", exc_info=True)
+             return "[参数字符串解析错误]"
+
+    # 其他未知类型
+    logger.warning(f"未知的参数数据类型: {type(params_data)}，值: {params_data}")
+    return "参数格式未知"
 
 if __name__ == '__main__':
     # 测试
@@ -58,16 +68,21 @@ if __name__ == '__main__':
     test_params_2 = None
     test_params_3 = {}
     test_params_4 = "[Variable: bodyData]" # 来自 AST 的标记
-    test_params_5 = "{key: 'old style string'}" # 旧格式字符串
+    test_params_5 = "{key: 'old style string'}" # 格式错误的 JSON 字符串
+    test_params_6 = '{"valid": "json string"}' # 有效的 JSON 字符串
+    test_params_7 = 123 # 意外类型
 
-    print("Test 1:")
+    print("Test 1 (Dict):")
     print(format_params(test_params_1))
-    print("\nTest 2:")
+    print("\nTest 2 (None):")
     print(format_params(test_params_2))
-    print("\nTest 3:")
+    print("\nTest 3 (Empty Dict):")
     print(format_params(test_params_3))
-    print("\nTest 4:")
+    print("\nTest 4 (AST Marker String):")
     print(format_params(test_params_4))
-    print("\nTest 5:")
+    print("\nTest 5 (Malformed JSON String):")
     print(format_params(test_params_5))
-
+    print("\nTest 6 (Valid JSON String):")
+    print(format_params(test_params_6))
+    print("\nTest 7 (Unexpected Type):")
+    print(format_params(test_params_7))
