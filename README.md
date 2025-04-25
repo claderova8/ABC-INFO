@@ -32,30 +32,31 @@
 
 ### 1. API 请求提取
 
-:contentReference[oaicite:16]{index=16}&#8203;:contentReference[oaicite:17]{index=17}
+工具使用正则表达式等方法，从 JavaScript 代码中识别并提取各类 HTTP API 请求：
 
-- **REST API 调用**：&#8203;:contentReference[oaicite:18]{index=18}
-- **GraphQL 请求**：&#8203;:contentReference[oaicite:19]{index=19}
-- **WebSocket 连接**：&#8203;:contentReference[oaicite:20]{index=20}
-- **通用 HTTP 请求**：&#8203;:contentReference[oaicite:21]{index=21}&#8203;:contentReference[oaicite:22]{index=22}
+- **REST API 调用**：检测 `axios.get()`、`$.ajax()` 等常见库调用  
+- **GraphQL 请求**：识别带有 `query` 或 `mutation` 的 GraphQL 查询及变量  
+- **WebSocket 连接**：提取 `new WebSocket(url)` 或 `WebSocket.open()` 初始化调用  
+- **通用 HTTP 请求**：支持原生 `fetch()`、`XMLHttpRequest` 和其他 HTTP 方法（GET/POST/PUT/DELETE/PATCH）  
 
 ### 2. 参数处理
 
-:contentReference[oaicite:23]{index=23}&#8203;:contentReference[oaicite:24]{index=24}
+对提取到的请求参数进行解析与格式化：
 
-- :contentReference[oaicite:25]{index=25}
-- :contentReference[oaicite:26]{index=26}
-- :contentReference[oaicite:27]{index=27}&#8203;:contentReference[oaicite:28]{index=28}
+- **JSON 清理**：修复不合规或缺少引号的 JSON 字符串  
+- **表达式解析**：替换或评估简单的 JavaScript 变量、模板字符串等  
+- **格式化输出**：统一缩进和排序，使参数结构清晰可读  
 
 ### 3. API 分类
 
-:contentReference[oaicite:29]{index=29}&#8203;:contentReference[oaicite:30]{index=30}
+根据 URL 特征和调用上下文，对提取到的 API 进行自动分类：
 
-- :contentReference[oaicite:31]{index=31}
-- :contentReference[oaicite:32]{index=32}
-- :contentReference[oaicite:33]{index=33}
-- RPC
-- :contentReference[oaicite:34]{index=34}&#8203;:contentReference[oaicite:35]{index=35}
+- **RESTful API**：基于 URL 路径和 HTTP 方法判定  
+- **GraphQL**：通过关键词（`query`, `mutation`）及请求体结构识别  
+- **WebSocket**：根据使用的协议和构造函数区分  
+- **RPC**：检测 JSON-RPC、XML-RPC 等远程调用格式  
+- **通用 HTTP API**：无法归类时，作为通用 HTTP 请求处理  
+
 
 ### 4. 使用方式
 
