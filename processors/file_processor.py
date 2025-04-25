@@ -33,7 +33,9 @@ def process_js_file(file_path, output_to_file=True):
             results = extract_requests(js_content)
             if results:
                 for result in results:
-                    output.append(f"请求: \"{result['method']} {result['url']}\"")
+                    # 添加API类型显示
+                    api_type = result.get('api_type', 'HTTP API')
+                    output.append(f"请求: \"{result['method']} {result['url']}\" [{api_type}]")
                     if result['params']:
                         formatted_params = format_params(result['params'])
                         output.append(f"请求参数: {formatted_params}")
