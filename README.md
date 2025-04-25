@@ -1,6 +1,6 @@
 # JavaScript API 提取工具分析
 
-这是一个用 Python 编写的工具，旨在从 JavaScript 代码中提取和分析 HTTP API 请求信息。无论是分析网页中的内联 JavaScript、外部 JavaScript 文件，还是直接处理本地 JavaScript 文件，该工具均可提取其中的 API 请求细节。&#8203;:contentReference[oaicite:1]{index=1}
+这是一个用 Python 编写的工具，主要功能是从 JavaScript 代码中提取和分析 HTTP API 请求信息。无论是分析网页中的内联 JavaScript、外部 JavaScript 文件，还是直接处理本地 JavaScript 文件，都能提取出其中的 API 请求细节。
 
 ## 项目结构
 
