@@ -1,185 +1,232 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
-URL处理器模块
-功能：处理URL和网页，提取API信息
+URL 处理器模块 (异步版本)
+功能：处理 URL 和网页，提取 API 信息 (使用 aiohttp, BeautifulSoup, AST)
 """
-
-import re
-import requests
+import asyncio
+import aiohttp
 from urllib.parse import urljoin
-from requests.exceptions import RequestException, Timeout
+from bs4 import BeautifulSoup # 用于解析 HTML
+import logging
 
-from extractors.js_extractor import extract_requests
-from formatters.param_formatter import format_params
-from utils.output_utils import write_to_file
+from extractors.js_extractor import extract_requests # 使用新的 AST 提取器
+from formatters.param_formatter import format_params # 使用新的格式化器
+from utils.output_utils import write_to_file, append_to_file # 假设 output_utils 适配
 
-def process_js_url(url, output_to_file=True):
-    """
-    处理JavaScript URL并提取请求信息
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-    参数:
-        url: JavaScript文件的URL
-        output_to_file: 是否输出到文件
-
-    返回:
-        处理结果文本
-    """
-    output = []
-    output.append(f"\n对应JS文件: {url}")
-    output.append("=" * 60)
-
+# --- 异步 HTTP 请求 ---
+async def fetch_content(session, url, timeout=10):
+    """异步获取 URL 内容"""
     try:
-        # 下载JavaScript文件，设置更短的超时时间
-        response = requests.get(url, timeout=5) # 缩短超时时间
-        response.raise_for_status() # 检查HTTP请求是否成功
+        async with session.get(url, timeout=timeout, ssl=False) as response: # ssl=False 忽略证书错误 (慎用)
+            response.raise_for_status() # 检查 HTTP 错误 (4xx, 5xx)
+            # 尝试多种编码解码
+            content = None
+            try:
+                 content = await response.text(encoding='utf-8')
+            except UnicodeDecodeError:
+                 try:
+                     content = await response.text(encoding='gbk')
+                 except UnicodeDecodeError:
+                      # 使用原始字节流和猜测的编码
+                      raw_content = await response.read()
+                      content = raw_content.decode(response.charset or 'utf-8', errors='replace')
 
-        # 提取请求信息
-        results = extract_requests(response.text)
-        if results:
-            for result in results:
-                # 添加API类型显示
-                api_type = result.get('api_type', 'HTTP API')
-                output.append(f"请求: \"{result['method']} {result['url']}\" [{api_type}]")
-                if result['params']:
-                    # 格式化参数，并处理格式化失败的情况
-                    formatted_params = format_params(result['params'])
-                    output.append(f"请求参数: {formatted_params}")
-                output.append("-" * 60)
-        else:
-            output.append("未找到请求信息")
-
-    except Timeout:
-        output.append(f"下载JS文件超时: {url}")
-    except RequestException as e:
-        output.append(f"下载JS文件时发生网络错误: {url} - {str(e)}")
+            return content
+    except aiohttp.ClientResponseError as e:
+        logger.error(f"HTTP error fetching {url}: {e.status} {e.message}")
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout fetching {url} after {timeout} seconds.")
+    except aiohttp.ClientError as e:
+        logger.error(f"Client error fetching {url}: {e}")
     except Exception as e:
-        # 捕获其他未知错误
-        output.append(f"处理URL时发生未知错误: {url} - {str(e)}")
+        logger.error(f"Unexpected error fetching {url}: {e}")
+    return None
 
-    result_text = "\n".join(output)
+# --- JS 处理 ---
+async def process_js_content(js_content, source_url="inline/local", output_to_file=True):
+    """处理 JavaScript 内容字符串 (来自文件或 URL)"""
+    output_lines = []
+    output_lines.append(f"\n--- 分析来源: {source_url} ---")
+    output_lines.append("-" * 60)
 
-    # 输出到控制台
-    print(result_text)
+    results = extract_requests(js_content) # 使用 AST 提取器
 
-    # 输出到文件
+    if results:
+        for result in results:
+            api_type = result.get('api_type', 'HTTP API')
+            method = result.get('method', 'UNKNOWN')
+            url = result.get('url', 'UNKNOWN')
+            loc = result.get('source_loc', {})
+            loc_str = f" (Line: {loc.get('line', '?')})" if loc else ""
+
+            output_lines.append(f"请求: \"{method} {url}\" [{api_type}]{loc_str}")
+
+            params = result.get('params')
+            if params is not None: # 检查是否为 None
+                formatted_params = format_params(params) # 使用新的格式化器
+                output_lines.append(f"参数:\n{formatted_params}")
+            output_lines.append("-" * 60)
+    else:
+        output_lines.append("在此来源未找到 API 请求信息")
+
+    result_text = "\n".join(output_lines) + "\n"
+
+    # 异步写入文件 (如果 output_utils 支持) 或同步写入
     if output_to_file:
-        write_to_file(result_text + "\n")
+        # write_to_file(result_text) # 如果是同步的
+        await append_to_file(result_text) # 假设 output_utils 有异步追加函数
 
     return result_text
 
-def process_url_list(url_list, is_js=False, output_to_file=True):
-    """
-    处理URL列表
 
-    参数:
-        url_list: URL列表或包含URL列表的文件路径
-        is_js: 是否为JavaScript URL列表（否则为网页URL）
-        output_to_file: 是否输出到文件
-    """
-    overall_output = []
+async def process_js_url(session, url, output_to_file=True):
+    """处理单个 JavaScript URL"""
+    logger.info(f"Fetching JS from URL: {url}")
+    js_content = await fetch_content(session, url)
+    if js_content:
+        logger.info(f"Processing JS content from: {url}")
+        return await process_js_content(js_content, source_url=url, output_to_file=output_to_file)
+    else:
+        error_msg = f"\n--- 无法获取或处理 JS URL: {url} ---\n"
+        if output_to_file:
+             await append_to_file(error_msg)
+        return error_msg
 
-    # 如果输入是文件路径，读取文件内容
+
+# --- 网页处理 ---
+async def process_html_page(session, page_url, output_to_file=True):
+    """处理单个网页 URL，提取并分析 JS"""
+    page_output = []
+    page_output.append(f"\n{'='*30} 分析网页: {page_url} {'='*30}")
+
+    logger.info(f"Fetching HTML page: {page_url}")
+    html_content = await fetch_content(session, page_url)
+
+    if not html_content:
+        error_msg = f"无法获取网页内容: {page_url}\n"
+        page_output.append(error_msg)
+        if output_to_file:
+            await append_to_file("\n".join(page_output))
+        return "\n".join(page_output)
+
+    logger.info(f"Parsing HTML and extracting scripts from: {page_url}")
+    soup = BeautifulSoup(html_content, 'html.parser') # 使用 bs4 解析 HTML
+
+    js_tasks = []
+    processed_js_urls = set() # 防止重复处理同一个 JS URL
+
+    # 提取外部 JS 文件链接
+    script_tags_src = soup.find_all('script', src=True)
+    if script_tags_src:
+        page_output.append("\n发现外部 JavaScript 文件:")
+        for tag in script_tags_src:
+            js_link = tag['src']
+            if not js_link: continue
+            full_js_url = urljoin(page_url, js_link) # 处理相对路径
+            if full_js_url not in processed_js_urls:
+                 page_output.append(f"- {full_js_url}")
+                 # 创建异步任务来处理这个 JS URL
+                 js_tasks.append(process_js_url(session, full_js_url, output_to_file=False))
+                 processed_js_urls.add(full_js_url)
+    else:
+         page_output.append("\n未发现外部 JavaScript 文件链接。")
+
+
+    # 提取内联 JS
+    inline_script_tags = soup.find_all('script', src=False)
+    inline_js_found = False
+    if inline_script_tags:
+        page_output.append("\n分析内联 JavaScript:")
+        for i, tag in enumerate(inline_script_tags):
+            inline_js = tag.string
+            if inline_js and inline_js.strip():
+                inline_js_found = True
+                source_name = f"inline script {i+1} on {page_url}"
+                 # 创建异步任务处理内联 JS
+                js_tasks.append(process_js_content(inline_js, source_url=source_name, output_to_file=False))
+    if not inline_js_found:
+        page_output.append("\n未发现有效的内联 JavaScript 代码。")
+
+
+    # ---- 并发执行所有 JS 分析任务 ----
+    if js_tasks:
+         logger.info(f"Waiting for {len(js_tasks)} JS analysis tasks for {page_url}...")
+         js_results = await asyncio.gather(*js_tasks)
+         logger.info(f"Finished JS analysis tasks for {page_url}.")
+         # 将每个 JS 分析结果追加到页面输出
+         for js_result_text in js_results:
+             page_output.append(js_result_text)
+    else:
+        page_output.append("\n未找到可分析的 JavaScript (外部或内联)。")
+
+
+    page_output.append(f"\n{'='*30} 结束分析网页: {page_url} {'='*30}\n")
+    final_page_text = "\n".join(page_output)
+
+    # 统一写入该页面的所有分析结果
+    if output_to_file:
+        await append_to_file(final_page_text)
+
+    return final_page_text
+
+
+# --- 列表处理 ---
+async def process_url_list(url_list_source, is_js=False, output_to_file=True, concurrency=10):
+    """
+    异步处理 URL 列表 (来自文件或列表对象)
+    """
     urls = []
-    if isinstance(url_list, str):
+    if isinstance(url_list_source, str): # 是文件路径
         try:
-            with open(url_list, 'r', encoding='utf-8') as f:
+            with open(url_list_source, 'r', encoding='utf-8') as f:
                 urls = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+            logger.info(f"Read {len(urls)} URLs from file: {url_list_source}")
         except FileNotFoundError:
-            error_msg = f"URL列表文件未找到: {url_list}"
-            print(error_msg)
-            if output_to_file:
-                write_to_file(error_msg + "\n")
+            logger.error(f"URL list file not found: {url_list_source}")
+            if output_to_file: await append_to_file(f"Error: URL list file not found: {url_list_source}\n")
             return
         except Exception as e:
-            error_msg = f"无法读取URL列表文件: {url_list} - {str(e)}"
-            print(error_msg)
-            if output_to_file:
-                write_to_file(error_msg + "\n")
+            logger.error(f"Error reading URL list file {url_list_source}: {e}")
+            if output_to_file: await append_to_file(f"Error reading URL list file {url_list_source}: {e}\n")
             return
+    elif isinstance(url_list_source, list):
+        urls = [url.strip() for url in url_list_source if isinstance(url, str) and url.strip() and not url.strip().startswith('#')]
+        logger.info(f"Processing {len(urls)} URLs from list.")
     else:
-        urls = [url.strip() for url in url_list if url.strip() and not url.strip().startswith('#')]
-
-    if not urls:
-        info_msg = "未找到有效的URL进行处理。"
-        print(info_msg)
-        if output_to_file:
-            write_to_file(info_msg + "\n")
+        logger.error("Invalid url_list_source type. Expected file path (str) or list.")
         return
 
-    for url in urls:
-        if is_js:
-            # 处理JavaScript URL
-            result = process_js_url(url, output_to_file=False)
-            overall_output.append(result)
-        else:
-            # 如果是网页URL，尝试提取页面中的JS
-            try:
-                overall_output.append(f"\n分析网页: {url}")
-                overall_output.append("=" * 60)
+    if not urls:
+        logger.warning("No valid URLs found to process.")
+        if output_to_file: await append_to_file("Info: No valid URLs found to process.\n")
+        return
 
-                # 下载网页
-                response = requests.get(url, timeout=10)
-                response.raise_for_status() # 检查HTTP请求是否成功
+    # 创建 aiohttp 客户端会话
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        # 创建处理任务
+        for url in urls:
+            if is_js:
+                tasks.append(process_js_url(session, url, output_to_file=output_to_file))
+            else:
+                tasks.append(process_html_page(session, url, output_to_file=output_to_file))
 
-                # 提取页面中的JS链接
-                # 改进的正则表达式，更精确地匹配src属性
-                js_links = re.findall(r'<script\s+[^>]*src=["\'](.*?\.js(?:[^"\'>]*)?)["\']', response.text, re.IGNORECASE)
-                if js_links:
-                    overall_output.append("\n发现外部JavaScript文件:")
-                    for js_link in js_links:
-                        # 将相对路径转为绝对URL
-                        full_js_url = urljoin(url, js_link)
-                        overall_output.append(f"- {full_js_url}")
-                        # 处理每个JS文件
-                        result = process_js_url(full_js_url, output_to_file=False)
-                        overall_output.append(result)
+        # 使用 Semaphore 控制并发数量
+        semaphore = asyncio.Semaphore(concurrency)
+        async def run_with_semaphore(task):
+            async with semaphore:
+                return await task
 
-                # 提取内联JS
-                # 改进的正则表达式，更精确地匹配script标签内容
-                inline_js_blocks = re.findall(r'<script[^>]*>(.*?)</script>', response.text, re.DOTALL | re.IGNORECASE)
-                if inline_js_blocks:
-                    overall_output.append("\n分析网页内联JavaScript:")
-                    overall_output.append("=" * 60)
+        logger.info(f"Starting processing of {len(tasks)} tasks with concurrency limit {concurrency}...")
+        # 并发执行任务
+        results = await asyncio.gather(*(run_with_semaphore(task) for task in tasks))
+        logger.info("Finished processing all URLs.")
 
-                    # 处理每段内联JS
-                    for i, js in enumerate(inline_js_blocks):
-                         overall_output.append(f"\n--- 内联JS块 {i+1} ---")
-                         results = extract_requests(js)
-                         if results:
-                             for result in results:
-                                 # 添加API类型显示
-                                 api_type = result.get('api_type', 'HTTP API')
-                                 output_line = f"请求: \"{result['method']} {result['url']}\" [{api_type}]"
-                                 overall_output.append(output_line)
-                                 if result['params']:
-                                     formatted_params = format_params(result['params'])
-                                     overall_output.append(f"请求参数: {formatted_params}")
-                                 overall_output.append("-" * 60)
-                         else:
-                             overall_output.append("未找到请求信息")
+        # (可选) 可以在这里处理或汇总 results，但结果已写入文件
+        # print("\n--- Overall Summary ---")
+        # print(f"Processed {len(results)} URLs/Pages.")
 
-
-                # 如果没找到任何JavaScript
-                if not js_links and not inline_js_blocks:
-                    overall_output.append("未在页面中找到JavaScript")
-
-            except Timeout:
-                overall_output.append(f"访问网页超时: {url}")
-            except RequestException as e:
-                overall_output.append(f"访问网页时发生网络错误: {url} - {str(e)}")
-            except Exception as e:
-                overall_output.append(f"处理网页 {url} 时发生未知错误: {str(e)}")
-
-        overall_output.append("\n" + "=" * 70 + "\n")
-
-    # 将结果写入文件
-    result_text = "\n".join(overall_output)
-    if output_to_file:
-        write_to_file(result_text + "\n")
-
-    # 输出到控制台
-    print(result_text)
-
-    return result_text
