@@ -16,7 +16,7 @@ def extract_requests(js_content):
         js_content: JavaScript代码字符串
     
     返回:
-        包含提取出的请求信息的列表，每项包含method(请求方法)、url和params(请求参数)
+        包含提取出的请求信息的列表，每项包含method(请求方法)、url、params(请求参数)和api_type(API类型)
     """
     results = []
     
@@ -34,6 +34,39 @@ def extract_requests(js_content):
         r'(?:\.|\s+)(?P<method>get|post|put|delete|patch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
         r'method\s*:\s*[\'"](?P<method>[^\'"]*)[\'"][^}]*url\s*:\s*[\'"](?P<url>[^\'"]*)[\'"](,|\})',
         r'url\s*:\s*[\'"](?P<url>[^\'"]*)[\'"](,|\})[^}]*method\s*:\s*[\'"](?P<method>[^\'"]*)[\'"]',
+        
+        # 新增: Angular HttpClient模式
+        r'this\.http\.(?P<method>get|post|put|delete|patch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+        r'http\.(?P<method>get|post|put|delete|patch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+        
+        # 新增: Vue Axios/Resource模式
+        r'this\.\$(?:http|axios|resource)\.(?P<method>get|post|put|delete|patch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+        
+        # 新增: 通用函数调用，URL作为参数
+        r'(?:request|api|client|http)(?:Request|Call|Fetch)?\.(?P<method>get|post|put|delete|patch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+        
+        # 新增: React Query/SWR等模式
+        r'use(?:Query|SWR|Request|Fetch)\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+        r'use(?:Query|SWR|Request|Fetch)\s*\(\s*\[\s*[\'"](?P<url>[^\'"]*)[\'"](,|\))',
+    ]
+    
+    # 新增: GraphQL请求模式
+    graphql_patterns = [
+        # Apollo Client
+        r'(?:apolloClient|client)\.query\s*\(\s*\{[^}]*query\s*:\s*(?:gql|graphql)`(?P<query>[^`]*)`',
+        r'(?:apolloClient|client)\.mutate\s*\(\s*\{[^}]*mutation\s*:\s*(?:gql|graphql)`(?P<query>[^`]*)`',
+        # 通用GraphQL请求
+        r'(?:graphql|gql)\s*`(?P<query>[^`]*)`',
+        # 其他GraphQL客户端
+        r'(?:request|fetch|post)\s*\(\s*[\'"](?P<url>[^\'"]*(?:graphql|gql)[^\'"]*)[\'"]',
+    ]
+    
+    # 新增: WebSocket连接模式
+    websocket_patterns = [
+        r'(?:new\s+)?WebSocket\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"]',
+        r'(?:new\s+)?ReconnectingWebSocket\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"]',
+        r'socket\s*\=\s*io\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"]',  # Socket.io
+        r'connect\s*\(\s*[\'"](?P<url>[^\'"]*)[\'"]',  # 通用WebSocket连接
     ]
     
     # 提取请求参数的正则表达式模式
@@ -49,6 +82,9 @@ def extract_requests(js_content):
         # 查找URL前后附近的参数对象
         r'(\{[^}{]*(?:\{[^}{]*\}[^}{]*)*\})\s*[,;)]\s*[\'"](?:[^\'"]*/[^\'"]*)[\'"]',
         r'[\'"](?:[^\'"]*/[^\'"]*)[\'"](?:\s*[,;)]|\s*\+\s*\w+)\s*(\{[^}{]*(?:\{[^}{]*\}[^}{]*)*\})',
+        
+        # 新增: GraphQL变量参数模式
+        r'variables\s*:\s*(\{[^}{]*(?:\{[^}{]*\}[^}{]*)*\})',
     ]
     
     # 使用更通用的大括号查找策略 - 优化JSON对象参数识别
@@ -101,14 +137,71 @@ def extract_requests(js_content):
                     params = closest_match.group(0)
                     params = re.sub(r'\s+', ' ', params).strip()
             
+            # 确定API类型
+            api_type = classify_api_endpoint(url, method, context)
+            
             # 添加到结果中
             results.append({
                 'method': method,
                 'url': url,
-                'params': params
+                'params': params,
+                'api_type': api_type
             })
     
-    # 第二步：额外查找更多的API调用模式 - 直接查找URL并推断其上下文
+    # 第二步：提取GraphQL请求
+    for pattern in graphql_patterns:
+        matches = re.finditer(pattern, js_content, re.DOTALL)
+        for match in matches:
+            # 对于GraphQL请求，我们设置method为POST（默认）
+            method = "POST"
+            
+            # 如果是具有URL的GraphQL请求
+            if 'url' in match.groupdict():
+                url = match.group('url')
+            else:
+                # 尝试从上下文中获取GraphQL端点URL
+                start_pos = max(0, match.start() - 300)
+                end_pos = min(len(js_content), match.end() + 100)
+                context = js_content[start_pos:end_pos]
+                
+                # 尝试查找GraphQL端点URL
+                url_match = re.search(r'(?:url|uri|endpoint)\s*:\s*[\'"]([^\'"]*(?:graphql|gql)[^\'"]*)[\'"]', context)
+                if url_match:
+                    url = url_match.group(1)
+                else:
+                    # 如果找不到明确的URL，使用通用GraphQL端点
+                    url = "/graphql"
+            
+            # 获取GraphQL查询
+            if 'query' in match.groupdict():
+                query = match.group('query')
+                params = f'{{"query": "{query.replace("`", "").replace('"', "\'")}"}}' 
+            else:
+                params = None
+            
+            # 添加到结果
+            results.append({
+                'method': method,
+                'url': url,
+                'params': params,
+                'api_type': 'GraphQL'
+            })
+    
+    # 第三步：提取WebSocket连接
+    for pattern in websocket_patterns:
+        matches = re.finditer(pattern, js_content)
+        for match in matches:
+            url = match.group('url')
+            
+            # 添加到结果
+            results.append({
+                'method': 'CONNECT',  # WebSocket使用CONNECT作为方法标识
+                'url': url,
+                'params': None,
+                'api_type': 'WebSocket'
+            })
+    
+    # 第四步：额外查找更多的API调用模式 - 直接查找URL并推断其上下文
     url_pattern = r'[\'"](?P<url>/[^\'"/][^\'"]*)[\'"]\s*(?:[,;)\]]|$)'
     url_matches = re.finditer(url_pattern, js_content)
     for url_match in url_matches:
@@ -165,6 +258,9 @@ def extract_requests(js_content):
                 params = closest_match.group(0)
                 params = re.sub(r'\s+', ' ', params).strip()
         
+        # 确定API类型
+        api_type = classify_api_endpoint(url, method, context)
+        
         # 判断是否已经有相同的请求（去重）
         is_duplicate = False
         for result in results:
@@ -180,7 +276,52 @@ def extract_requests(js_content):
             results.append({
                 'method': method,
                 'url': url,
-                'params': params
+                'params': params,
+                'api_type': api_type
             })
     
     return results
+
+def classify_api_endpoint(url, method, context=""):
+    """
+    对API端点进行分类
+    
+    参数:
+        url: API端点URL
+        method: HTTP方法
+        context: API调用的上下文代码
+        
+    返回:
+        API类型: 'RESTful', 'GraphQL', 'WebSocket', 'RPC' 等
+    """
+    # 检查是否为GraphQL端点
+    if '/graphql' in url.lower() or '/gql' in url.lower() or 'graphql' in context.lower():
+        return 'GraphQL'
+    
+    # 检查是否为WebSocket连接
+    if url.startswith(('ws://', 'wss://')) or 'websocket' in context.lower() or 'socket.io' in context.lower():
+        return 'WebSocket'
+    
+    # 检查是否为gRPC或其他RPC调用
+    if '/rpc' in url.lower() or 'rpc' in context.lower() or '/jsonrpc' in url.lower():
+        return 'RPC'
+    
+    # 判断是否为常见的REST资源模式 (例如 /users/{id} 等)
+    if re.search(r'/(?:api/v\d+/)?[a-z]+(?:/[a-z]+)*(?:/\d+)?$', url):
+        return 'RESTful'
+    
+    # 检查PUT/DELETE/PATCH方法通常与RESTful API一起使用
+    if method in ['PUT', 'DELETE', 'PATCH']:
+        return 'RESTful'
+    
+    # 对于更复杂的URL，进一步判断
+    if '/api/' in url:
+        # 检查是否带有版本号 (例如 /api/v1/)
+        if re.search(r'/api/v\d+/', url):
+            return 'RESTful'
+        # 检查是否是典型的REST资源URLs模式
+        if re.search(r'/api/[a-z_]+(?:/\d+)?(?:/[a-z_]+)*', url):
+            return 'RESTful'
+    
+    # 如果没有明确的匹配，默认为HTTP API
+    return 'HTTP API'
