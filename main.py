@@ -3,8 +3,8 @@
 
 """
 JavaScript API 提取工具 (主脚本)
-功能：从 JavaScript 文件或网页中提取 HTTP API 请求信息（包括 RESTful, GraphQL, WebSocket）。
-(优化版本)
+功能：从 JavaScript 文件或网页中提取 HTTP API 请求信息，并可选择生成 HTML 报告。
+(优化版本 v4 - 移除 -o 参数)
 """
 
 import argparse
@@ -12,182 +12,265 @@ import os
 import sys
 import warnings
 import logging
+from pathlib import Path
+from urllib.parse import urlparse
 
 # --- 配置日志 ---
-# 可以根据需要调整日志级别和格式
-# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+# 日志级别将在解析参数后根据 -v/--verbose 设置
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
+log = logging.getLogger(__name__) # 获取主模块日志记录器
 
 # --- 忽略 requests 的 InsecureRequestWarning ---
-# requests 通常在 verify=False 时发出此警告
 try:
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
     warnings.simplefilter('ignore', InsecureRequestWarning)
-    logging.debug("已禁用 InsecureRequestWarning。")
+    log.debug("已禁用 InsecureRequestWarning。")
 except ImportError:
-    logging.debug("无法导入 InsecureRequestWarning，可能 requests 版本不同或未安装。")
+    log.debug("无法导入 InsecureRequestWarning，可能 requests 版本不同或未安装。")
     pass
 
 # --- 模块导入 ---
-# 导入本地模块中的函数
-# 假设模块 (processor, utils) 与 main.py 在同一个包或目录下。
 try:
-    # 优先尝试相对导入（适用于作为包运行时）
     from . import processor
     from . import utils
-    logging.debug("使用相对导入加载模块。")
+    from . import reporter
+    log.debug("使用相对导入加载模块。")
 except ImportError:
-    # 如果相对导入失败（例如作为顶级脚本运行时），则尝试直接导入
     try:
         import processor
         import utils
-        logging.debug("使用直接导入加载模块。")
+        import reporter
+        log.debug("使用直接导入加载模块。")
     except ImportError as e:
-        # 使用 logging 记录错误信息
-        logging.critical(f"无法导入所需的模块 (processor, utils)。请确保它们与 main.py 在同一目录或位于 Python 路径中。")
-        logging.critical(f"详细错误: {e}")
-        # 打印到 stderr 以确保用户看到错误信息
-        print(f"错误：无法导入所需的模块 (processor, utils)。请确保它们与 main.py 在同一目录或位于 Python 路径中。", file=sys.stderr)
+        log.critical(f"无法导入所需的模块 (processor, utils, reporter)。请确保它们与 main.py 在同一目录或位于 Python 路径中。")
+        log.critical(f"详细错误: {e}")
+        print(f"错误：无法导入所需的模块 (processor, utils, reporter)。请确保它们与 main.py 在同一目录或位于 Python 路径中。", file=sys.stderr)
         print(f"详细错误: {e}", file=sys.stderr)
-        sys.exit(1) # 无法继续执行，退出
+        sys.exit(1)
 
 # --- 全局配置 ---
-DEFAULT_OUTPUT_FILE = 'api_extraction_results.txt' # 默认输出文件名
+DEFAULT_RESULTS_SUFFIX = '_api_results.txt' # 提取结果文件后缀
+DEFAULT_REPORT_SUFFIX = '.html' # 报告文件后缀
+
+# --- 辅助函数 ---
+
+def slugify(text: str) -> str:
+    """将文本转换为适合用作文件名的 slug 格式 (更通用)"""
+    # 移除协议头
+    text = re.sub(r'^(https?://|ws?://)', '', text)
+    # 替换掉常见的 URL 特殊字符和空格为下划线
+    text = re.sub(r'[/:?#\[\]@!$&\'()*+,;=\s]+', '_', text.strip())
+    # 移除其他可能不安全的字符（除了字母数字、下划线、连字符、点）
+    text = re.sub(r'[^\w\.\-]+', '', text)
+    # 移除开头和结尾的下划线/点/连字符
+    slug = text.strip('._-')
+    # 防止文件名过长
+    return slug[:100] # 限制最大长度
+
+def determine_output_filename(args: argparse.Namespace) -> Path:
+    """根据输入参数自动确定提取结果的输出文件名"""
+    base_name = "api_extraction" # 默认基础名
+
+    if args.file:
+        input_path = Path(args.file)
+        base_name = input_path.stem # 使用文件名（不含扩展名）
+    elif args.list:
+        input_path = Path(args.list)
+        base_name = input_path.stem + "_list"
+    elif args.extract_list:
+        input_path = Path(args.extract_list)
+        base_name = input_path.stem + "_jslist"
+    elif args.url:
+        try:
+            parsed_url = urlparse(args.url)
+            # 使用域名作为基础名，如果路径不为空，可以附加路径的最后部分
+            domain = parsed_url.netloc
+            path_part = Path(parsed_url.path).name if parsed_url.path and Path(parsed_url.path).name else ''
+            base_name = slugify(domain + "_" + path_part if path_part else domain)
+        except Exception:
+            log.warning(f"无法从 URL '{args.url}' 解析基础文件名，将使用默认名称。")
+            base_name = slugify(args.url) # 尝试 slugify 整个 URL
+    elif args.extract_url:
+         try:
+            parsed_url = urlparse(args.extract_url)
+            domain = parsed_url.netloc
+            path_part = Path(parsed_url.path).name if parsed_url.path and Path(parsed_url.path).name else ''
+            base_name = slugify(domain + "_" + path_part if path_part else domain) + "_js"
+         except Exception:
+            log.warning(f"无法从 JS URL '{args.extract_url}' 解析基础文件名，将使用默认名称。")
+            base_name = slugify(args.extract_url) # 尝试 slugify 整个 URL
+
+    # 如果 base_name 为空或无效，则使用默认值
+    if not base_name:
+        base_name = "api_extraction"
+
+    return Path(f"{base_name}{DEFAULT_RESULTS_SUFFIX}")
 
 # --- 主函数 ---
 def main():
-    """主函数：解析命令行参数并协调执行相应的处理流程"""
-    global DEFAULT_OUTPUT_FILE # 允许命令行参数修改默认输出文件名
+    """主函数：解析命令行参数并协调执行提取和报告生成流程"""
+    global DEFAULT_RESULTS_SUFFIX, DEFAULT_REPORT_SUFFIX
 
     # --- 参数解析器设置 ---
     parser = argparse.ArgumentParser(
-        description='从 JavaScript 代码或网页中提取 HTTP API 请求信息 (RESTful, GraphQL, WebSocket)。',
+        description='从 JavaScript 代码或网页中提取 HTTP API 请求信息，并可生成 HTML 报告。\n提取结果将自动保存到基于输入源命名的 .txt 文件中。',
         epilog='示例:\n'
-               '  python main.py -u https://example.com -o results.txt\n'
-               '  python main.py -f script.js\n'
-               '  python main.py -l urls.txt',
-        formatter_class=argparse.RawDescriptionHelpFormatter # 保留 epilog 中的换行符
+               '  python main.py -u https://example.com --report report.html\n'
+               '  python main.py -f script.js --report\n'
+               '  python main.py -l urls.txt -v',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    # --- 输入参数组 (互斥，必须提供其中一个) ---
+    # --- 输入参数组 ---
     input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        '-u', '--url',
-        metavar='PAGE_URL', # 参数的元变量名，用于帮助信息
-        help='要分析的单个网页 URL。将提取该页面引用的 JS 和内联 JS。' # 参数的帮助说明
-    )
-    input_group.add_argument(
-        '-eu', '--extract-url',
-        metavar='JS_URL',
-        help='要直接分析的单个 JavaScript 文件 URL。'
-    )
-    input_group.add_argument(
-        '-l', '--list',
-        metavar='PAGE_URL_FILE',
-        help='包含网页 URL 列表的文件路径 (每行一个 URL, # 开头为注释)。'
-    )
-    input_group.add_argument(
-        '-el', '--extract-list',
-        metavar='JS_URL_FILE',
-        help='包含 JavaScript 文件 URL 列表的文件路径 (每行一个 URL, # 开头为注释)。'
-    )
-    input_group.add_argument(
-        '-f', '--file',
-        metavar='JS_FILE_PATH',
-        help='要直接分析的本地 JavaScript 文件路径。'
-    )
+    input_group.add_argument('-u', '--url', metavar='PAGE_URL', help='要分析的单个网页 URL。')
+    input_group.add_argument('-eu', '--extract-url', metavar='JS_URL', help='要直接分析的单个 JavaScript 文件 URL。')
+    input_group.add_argument('-l', '--list', metavar='PAGE_URL_FILE', help='包含网页 URL 列表的文件路径。')
+    input_group.add_argument('-el', '--extract-list', metavar='JS_URL_FILE', help='包含 JavaScript 文件 URL 列表的文件路径。')
+    input_group.add_argument('-f', '--file', metavar='JS_FILE_PATH', help='要直接分析的本地 JavaScript 文件路径。')
 
-    # --- 输出文件参数 ---
+    # --- 报告参数 ---
     parser.add_argument(
-        '-o', '--output',
-        metavar='OUTPUT_FILE',
-        help=f'指定输出结果的文件名 (默认为: {DEFAULT_OUTPUT_FILE})',
-        default=DEFAULT_OUTPUT_FILE # 设置默认值
+        '--report',
+        nargs='?',
+        const=True,
+        metavar='HTML_REPORT_PATH',
+        help=f'生成 HTML 报告。可选地指定报告输出路径，否则将自动生成（基于输入源命名，后缀为 {DEFAULT_REPORT_SUFFIX}）。'
     )
 
     # --- 可选参数 ---
     parser.add_argument(
         '-v', '--verbose',
-        action='store_true', # 如果出现此参数，则值为 True
+        action='store_true',
         help='启用详细日志记录 (DEBUG 级别)。'
     )
-
 
     # --- 解析命令行参数 ---
     try:
         args = parser.parse_args()
     except SystemExit as e:
-         # 如果参数解析出错（例如缺少必需参数），argparse 会调用 sys.exit()
-         # argparse 默认会打印帮助信息，这里只需退出
-         logging.error("命令行参数解析错误。")
-         sys.exit(e.code) # 以 argparse 的退出码退出
+         log.error("命令行参数解析错误。")
+         sys.exit(e.code)
 
     # --- 根据 verbose 参数调整日志级别 ---
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-        logging.debug("已启用详细日志记录。")
+        log.debug("已启用详细日志记录。")
+    else:
+         logging.getLogger().setLevel(logging.INFO)
 
     # --- 初始化 ---
-    output_file_path = args.output # 获取最终的输出文件路径
-    # 创建/覆盖输出文件，并写入文件头信息
+    # 自动确定输出文件名
+    output_file_path = determine_output_filename(args)
+    log.info(f"提取结果将保存到: {output_file_path}")
+
+    # 创建/覆盖提取结果输出文件，并写入文件头信息
     try:
-        utils.create_output_header(output_file_path)
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        utils.create_output_header(str(output_file_path))
     except Exception as e:
-        # 处理创建输出文件或写入文件头时可能发生的错误
-        logging.critical(f"无法初始化输出文件 {output_file_path}: {e}", exc_info=True)
-        print(f"错误：无法初始化输出文件 {output_file_path}: {e}", file=sys.stderr)
-        sys.exit(1) # 无法继续，退出
+        log.critical(f"无法初始化提取结果输出文件 {output_file_path}: {e}", exc_info=True)
+        print(f"错误：无法初始化提取结果输出文件 {output_file_path}: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    logging.info(f"开始分析，结果将保存到: {output_file_path}")
-    print(f"开始分析，结果将保存到: {output_file_path}")
+    print(f"开始分析，提取结果将保存到: {output_file_path}")
 
-    # --- 根据解析的参数调用相应的处理函数 ---
-    exit_code = 0 # 默认为成功退出
+    # --- 执行提取 ---
+    extraction_success = True
+    exit_code = 0
     try:
+        # 将 Path 对象转换为字符串传递给旧函数（如果它们需要）
+        output_path_str = str(output_file_path)
         if args.url:
-            # 处理单个网页 URL
             js_cache = set()
-            processor.process_web_page(args.url, output_file_path, js_cache)
+            processor.process_web_page(args.url, output_path_str, js_cache)
         elif args.extract_url:
-            # 处理单个 JS URL
             js_cache = set()
-            processor.process_js_url(args.extract_url, output_file_path, js_cache)
+            processor.process_js_url(args.extract_url, output_path_str, js_cache)
         elif args.file:
-            # 处理本地 JS 文件
-            processor.process_js_file(args.file, output_file_path)
+            processor.process_js_file(args.file, output_path_str)
         elif args.list:
-            # 处理网页 URL 列表文件
-            processor.process_url_list_file(args.list, is_js_list=False, output_file=output_file_path)
+            processor.process_url_list_file(args.list, is_js_list=False, output_file=output_path_str)
         elif args.extract_list:
-            # 处理 JS URL 列表文件
-            processor.process_url_list_file(args.extract_list, is_js_list=True, output_file=output_file_path)
-        # 此处不需要 else，因为 input_group 设置了 required=True
+            processor.process_url_list_file(args.extract_list, is_js_list=True, output_file=output_path_str)
 
     except KeyboardInterrupt:
-         logging.warning("\n用户中断了操作。")
-         print("\n操作已被用户中断。", file=sys.stderr)
-         utils.write_to_file(output_file_path, "\n\n# 操作已被用户中断。\n")
-         exit_code = 1 # 设置退出码为 1 表示中断
+         log.warning("\n用户中断了提取操作。")
+         print("\n提取操作已被用户中断。", file=sys.stderr)
+         utils.write_to_file(output_path_str, "\n\n# 提取操作已被用户中断。\n")
+         extraction_success = False
+         exit_code = 1
     except Exception as e:
-        # 捕获在处理过程中可能发生的未预料的顶层错误
-        logging.critical(f"处理过程中发生意外错误: {e}", exc_info=True)
-        print(f"\n处理过程中发生意外错误: {e}", file=sys.stderr)
-        # 尝试向输出文件写入错误信息
+        log.critical(f"提取过程中发生意外错误: {e}", exc_info=True)
+        print(f"\n提取过程中发生意外错误: {e}", file=sys.stderr)
         try:
-            utils.write_to_file(output_file_path, f"\n\n# 处理过程中发生意外错误: {e}\n")
+            utils.write_to_file(output_path_str, f"\n\n# 提取过程中发生意外错误: {e}\n")
         except Exception as write_err:
-            logging.error(f"无法将顶层错误写入输出文件: {write_err}")
-        exit_code = 1 # 设置退出码为 1 表示错误
+            log.error(f"无法将提取错误写入输出文件: {write_err}")
+        extraction_success = False
+        exit_code = 1
 
-    finally:
-        # 无论成功还是失败，都打印结束信息
-        final_message = f"\n分析完成。结果已{'部分' if exit_code != 0 else ''}保存到: {output_file_path}"
-        logging.info(final_message)
-        print(final_message)
-        sys.exit(exit_code) # 以相应的退出码退出
+    # --- 提取完成信息 ---
+    if extraction_success:
+        log.info(f"提取完成。结果已保存到: {output_file_path}")
+        print(f"提取完成。结果已保存到: {output_file_path}")
+    else:
+        log.error(f"提取过程未成功完成。结果可能不完整: {output_file_path}")
+        print(f"提取过程未成功完成。结果可能不完整: {output_file_path}", file=sys.stderr)
+
+    # --- 生成报告 (如果需要且提取成功) ---
+    report_output_path_str = "" # 初始化报告路径字符串
+    report_generated = False
+    if args.report and extraction_success:
+        log.info("开始生成 HTML 报告...")
+        print("\n开始生成 HTML 报告...")
+
+        if isinstance(args.report, str): # 如果用户指定了报告路径
+            report_output_path = Path(args.report)
+        elif args.report is True: # 如果用户只提供了 --report 标志
+            # 基于提取输出文件名自动生成报告文件名
+            report_output_path = output_file_path.with_suffix(DEFAULT_REPORT_SUFFIX)
+            log.info(f"未指定报告路径，将使用默认路径: {report_output_path}")
+        else:
+             log.error("无效的 --report 参数值。")
+             exit_code = 1 # 标记错误
+             report_output_path = None # 防止后续尝试生成报告
+
+        if report_output_path:
+            report_output_path_str = str(report_output_path)
+            try:
+                # 调用 reporter 模块的函数
+                report_success = reporter.create_report(str(output_file_path), report_output_path_str)
+                if report_success:
+                    log.info(f"HTML 报告已成功生成: {report_output_path_str}")
+                    print(f"HTML 报告已成功生成: {report_output_path_str}")
+                    report_generated = True
+                else:
+                    log.error(f"生成 HTML 报告失败。请检查日志。")
+                    print(f"错误：生成 HTML 报告失败。请检查日志。", file=sys.stderr)
+                    exit_code = 1 # 标记错误
+            except Exception as report_err:
+                log.critical(f"生成报告时发生意外错误: {report_err}", exc_info=True)
+                print(f"\n生成报告时发生意外错误: {report_err}", file=sys.stderr)
+                exit_code = 1 # 标记错误
+
+    elif args.report and not extraction_success:
+        log.warning("由于提取过程未成功完成，跳过报告生成。")
+        print("由于提取过程未成功完成，跳过报告生成。", file=sys.stderr)
+
+    # --- 最终退出 ---
+    final_message = f"\n处理完成。"
+    if extraction_success:
+        final_message += f" 提取结果: {output_file_path}"
+    if report_generated:
+        final_message += f" HTML报告: {report_output_path_str}"
+    elif args.report and report_output_path_str: # 如果尝试生成报告但失败
+         final_message += f" 报告生成失败 (目标路径: {report_output_path_str})"
+
+    log.info(final_message)
+    print(final_message)
+    sys.exit(exit_code)
 
 # --- 脚本入口点 ---
 if __name__ == "__main__":
-    # 当脚本被直接执行时 (__name__ == "__main__")，调用 main() 函数
     main()
