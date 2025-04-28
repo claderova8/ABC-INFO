@@ -126,6 +126,9 @@ python main.py -el js_urls.txt -v
 - 文件头部包含生成时间、工具版本和注意事项。
 - 处理列表文件时，每个 URL 的分析结果会依次追加。
 - 程序中断或发生错误时会在文件末尾添加提示信息。
+
+![image](https://github.com/user-attachments/assets/9fbd2f5f-fd11-4566-aaf9-9a992eb4bb07)
+
 ## 📊 HTML 报告
 使用 --report 选项可以生成一个交互式的 HTML 报告。报告包含：
 - 报告标题和生成时间。
