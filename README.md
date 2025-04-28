@@ -104,3 +104,5 @@ python main.py -u https://example.com -o results.txt
 - **代码审计**  
   审查 JavaScript 代码中的 API 使用
 
+  ![image](https://github.com/user-attachments/assets/cb79fad4-90b6-4cdc-9d55-d4bed065c84f)
+
