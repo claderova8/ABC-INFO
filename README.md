@@ -3,17 +3,14 @@
 这是一个用于从网页或 JavaScript 文件中提取潜在 HTTP API 请求（包括 RESTful, GraphQL, WebSocket）的 Python 工具。它可以分析单个 URL、本地文件或包含 URL 列表的文件，并将提取结果保存到文本文件，并可选择生成交互式 HTML 报告。
 
 ## 目录
-✨ 功能特性  
-⬇️ 安装  
-🚀 使用方法  
-📂 文件结构说明  
-📄 输出格式  
-📊 HTML 报告  
-🙌 贡献  
-⚖️ 许可证  
-
----
-
+- [✨ 功能特性](#功能特性)  
+- [⬇️ 安装](#安装)  
+- [🚀 使用方法](#使用方法)  
+- [📂 文件结构说明](#文件结构说明)  
+- [📄 输出格式](#输出格式)  
+- [📊 HTML 报告](#html-报告)  
+- [🙌 贡献](#贡献)
+- 
 ## ✨ 功能特性
 - 支持分析单个网页 URL，自动抓取页面中的外部和内联 JavaScript。
 - 支持直接分析单个 JavaScript 文件 URL。
@@ -41,11 +38,11 @@ pip install requests beautifulsoup4
 python main.py [选项]
 ```
 #### 必需参数 (选择其中一个):
--u <PAGE_URL>, --url <PAGE_URL>: 分析单个网页 URL。
--eu <JS_URL>, --extract-url <JS_URL>: 直接分析单个 JS 文件 URL。
--l <PAGE_URL_FILE>, --list <PAGE_URL_FILE>: 分析包含网页 URL 列表的文件。
--el <JS_URL_FILE>, --extract-list <JS_URL_FILE>: 分析包含 JS 文件 URL 列表的文件。
--f <JS_FILE_PATH>, --file <JS_FILE_PATH>: 分析本地 JS 文件。
+- -u <PAGE_URL>, --url <PAGE_URL>: 分析单个网页 URL。
+- -eu <JS_URL>, --extract-url <JS_URL>: 直接分析单个 JS 文件 URL。
+- -l <PAGE_URL_FILE>, --list <PAGE_URL_FILE>: 分析包含网页 URL 列表的文件。
+- -el <JS_URL_FILE>, --extract-list <JS_URL_FILE>: 分析包含 JS 文件 URL 列表的文件。
+- -f <JS_FILE_PATH>, --file <JS_FILE_PATH>: 分析本地 JS 文件。
 
 #### 可选参数:
 - --report [HTML_PATH]: 生成 HTML 报告。如果未指定 HTML_PATH，将自动生成文件名（基于输入源，后缀为 .html）。
@@ -138,6 +135,7 @@ python main.py -el js_urls.txt -v
 - 参数区域支持展开/折叠，方便查看详细内容。
 - 支持返回顶部。
 HTML 报告提供了一种更直观的方式来浏览和分析大量的提取结果。
+
 ![image](https://github.com/user-attachments/assets/6e39cd48-581d-4e7c-9039-9252115c5c13)
 
 ## 🙌 贡献
