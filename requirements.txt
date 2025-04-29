@@ -1,9 +1,10 @@
 # 核心依赖
-requests>=2.20.0       # 用于同步 HTTP 请求 (可选，如果完全迁移到 async)
+requests>=2.20.0       # 用于同步 HTTP 请求 (保留以备后用或用于简单场景)
 aiohttp>=3.8.0        # 用于异步 HTTP 请求
 beautifulsoup4>=4.9.0 # 用于解析 HTML
 aiofiles>=0.8.0       # 用于异步文件 I/O
+chardet>=3.0.0        # aiohttp 推荐的编码检测库 (可选但推荐)
+cchardet>=2.1.7       # 更快的编码检测库 (可选但推荐, 可能需要 C 编译器)
 
-# 注意：该项目还需要 Node.js 和 'esprima' npm 包。
-# 1. 从 https://nodejs.org/ 安装 Node.js (LTS 版本推荐)
-# 2. 在项目根目录下运行 `npm install esprima` 来安装 Esprima 解析器。
+# 注意: beautifulsoup4 强烈推荐用于更可靠的 HTML 解析。
+# 如果需要最高精度的 JS 解析，未来可考虑集成 Node.js 和 AST 解析库 (如 esprima, acorn)。
